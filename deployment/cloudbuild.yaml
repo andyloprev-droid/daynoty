@@ -1,0 +1,36 @@
+# Cloud Build Configuration para News Agent
+# Deploy automático de cambios en main branch
+
+steps:
+  # Paso 1: Build de imagen Docker
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/news-agent:latest'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/news-agent:$SHORT_SHA'
+      - '.'
+
+  # Paso 2: Push a Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/news-agent:latest'
+
+  # Paso 3: Deploy a Cloud Run
+  - name: 'gcr.io/cloud-builders/gke-deploy'
+    args:
+      - 'run'
+      - '--filename=.'
+      - '--image=gcr.io/$PROJECT_ID/news-agent:latest'
+      - '--location=us-central1'
+      - '--namespace=default'
+
+images:
+  - 'gcr.io/$PROJECT_ID/news-agent:latest'
+  - 'gcr.io/$PROJECT_ID/news-agent:$SHORT_SHA'
+
+# Trigger en main branch
+options:
+  machineType: 'N1_HIGHCPU_8'

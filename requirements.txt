@@ -1,0 +1,22 @@
+# Web Scraping
+requests==2.31.0
+beautifulsoup4==4.12.2
+
+# APIs
+anthropic>=0.28.0
+
+# Google Cloud
+google-cloud-storage==2.10.0
+firebase-admin==6.2.0
+
+# Scheduling
+APScheduler==3.10.4
+
+# Configuration
+python-dotenv==1.0.0
+
+# Utils
+python-dateutil==2.8.2
+
+# Logging
+python-json-logger==2.0.7
