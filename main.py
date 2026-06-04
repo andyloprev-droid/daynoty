@@ -7,6 +7,7 @@ import argparse
 import sys
 from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 from news_agent import NewsAgent
 import config
 
@@ -55,12 +56,26 @@ def run_agent_once(agent: NewsAgent):
     agent.run()
 
 
+def daily_cleanup_job(agent: NewsAgent):
+    """Borrar todas las noticias del dashboard/BD (limpieza diaria 1 AM Miami)"""
+    logger = logging.getLogger(__name__)
+    try:
+        logger.info("=" * 50)
+        logger.info("LIMPIEZA DIARIA PROGRAMADA (1 AM Miami)")
+        logger.info("=" * 50)
+        deleted = agent.database.delete_all_articles()
+        logger.info(f"✓ Se borraron {deleted} artículos. Dashboard limpio.")
+        logger.info("=" * 50)
+    except Exception as e:
+        logger.error(f"Error en limpieza diaria programada: {e}", exc_info=True)
+
+
 def run_agent_scheduled(agent: NewsAgent):
     """Run agent on schedule"""
     logger = logging.getLogger(__name__)
 
     scheduler = BackgroundScheduler(
-        timezone=config.SCHEDULER_TIMEZONE
+        timezone="America/New_York"  # Miami/Florida timezone
     )
 
     # Schedule execution every X minutes
@@ -72,6 +87,15 @@ def run_agent_scheduled(agent: NewsAgent):
         name="News Processor",
     )
 
+    # Limpieza diaria a la 1:00 AM hora Miami (America/New_York)
+    scheduler.add_job(
+        daily_cleanup_job,
+        CronTrigger(hour=1, minute=0, timezone="America/New_York"),
+        args=[agent],
+        id="daily_cleanup_job",
+        name="Daily Cleanup 1AM Miami",
+    )
+
     scheduler.start()
 
     logger.info(
@@ -80,7 +104,8 @@ def run_agent_scheduled(agent: NewsAgent):
     logger.info(
         f"  Frequency: every {config.SCHEDULER_INTERVAL_MINUTES} minutes"
     )
-    logger.info(f"  Timezone: {config.SCHEDULER_TIMEZONE}")
+    logger.info(f"  Timezone: America/New_York (Miami)")
+    logger.info(f"  Limpieza diaria programada: 01:00 AM hora Miami")
 
     try:
         logger.info("Press Ctrl+C to stop...")

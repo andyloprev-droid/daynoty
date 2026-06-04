@@ -33,7 +33,7 @@ class NewsDatabase:
 
     def save_article(self, article_data: Dict) -> Optional[str]:
         """
-        Guardar artículo procesado en Firestore
+        Guardar artículo procesado en Firestore con número de día
 
         Args:
             article_data: Dict con datos del artículo
@@ -45,34 +45,156 @@ class NewsDatabase:
             # Agregar timestamp de procesamiento
             article_data["processed_date"] = datetime.now()
 
+            # Obtener número consecutivo del día
+            daily_number = self._get_next_daily_number()
+            article_data["daily_number"] = daily_number
+
             # Guardar en Firestore
             doc_ref = self.db.collection(self.collection).add(article_data)
             doc_id = doc_ref[1].id
 
-            logger.info(f"Artículo guardado en Firestore: {doc_id}")
+            logger.info(f"Artículo #{daily_number} guardado en Firestore: {doc_id}")
             return doc_id
 
         except Exception as e:
             logger.error(f"Error guardando artículo en Firestore: {e}")
             return None
 
-    def check_duplicate(self, url: str) -> bool:
+    def _get_next_daily_number(self) -> int:
         """
-        Verificar si noticia ya fue procesada
+        Obtener el siguiente número consecutivo para el día
+
+        Returns:
+            Número consecutivo del día
+        """
+        try:
+            today = datetime.now().date()
+            start_date = datetime(today.year, today.month, today.day)
+            end_date = datetime(today.year, today.month, today.day, 23, 59, 59)
+
+            query = (
+                self.db.collection(self.collection)
+                .where("processed_date", ">=", start_date)
+                .where("processed_date", "<=", end_date)
+                .order_by("daily_number", direction=firestore.Query.DESCENDING)
+                .limit(1)
+            )
+
+            docs = list(query.stream())
+
+            if docs:
+                last_number = docs[0].to_dict().get("daily_number", 0)
+                return last_number + 1
+            else:
+                return 1
+
+        except Exception as e:
+            logger.warning(f"Error obteniendo número consecutivo: {e}")
+            return 1
+
+    @staticmethod
+    def _normalize_title(title: str) -> str:
+        """Normalizar titulo para comparacion (lowercase, sin puntuacion, trim)"""
+        if not title:
+            return ""
+        import re
+        normalized = title.lower().strip()
+        # Remover puntuacion y caracteres especiales
+        normalized = re.sub(r'[^\w\s]', '', normalized)
+        # Colapsar espacios multiples
+        normalized = re.sub(r'\s+', ' ', normalized)
+        return normalized
+
+    @staticmethod
+    def _normalize_url(url: str) -> str:
+        """Normalizar URL para comparacion (sin query params, trailing slash)"""
+        if not url:
+            return ""
+        # Remover query string
+        url = url.split('?')[0].split('#')[0]
+        # Remover trailing slash
+        url = url.rstrip('/')
+        return url.lower()
+
+    def load_existing_index(self) -> dict:
+        """
+        Pre-cargar TODOS los titulos y URLs existentes en memoria.
+        Tambien devuelve 'items' con title+summary para dedup semantica.
+
+        Returns:
+            Dict con 'urls', 'titles' (sets normalizados) y 'items' (lista)
+        """
+        try:
+            urls = set()
+            titles = set()
+            items = []
+
+            docs = self.db.collection(self.collection).stream()
+            for doc in docs:
+                data = doc.to_dict()
+                url = data.get('url_source', '')
+                title = data.get('title', '')
+                summary = data.get('summary', '')
+
+                if url:
+                    urls.add(self._normalize_url(url))
+                if title:
+                    titles.add(self._normalize_title(title))
+                if title:
+                    items.append({'title': title, 'text': summary})
+
+            logger.info(
+                f"Cache de duplicados cargado: {len(urls)} URLs, "
+                f"{len(titles)} titulos, {len(items)} items semanticos"
+            )
+            return {'urls': urls, 'titles': titles, 'items': items}
+
+        except Exception as e:
+            logger.warning(f"Error cargando indice de duplicados: {e}")
+            return {'urls': set(), 'titles': set(), 'items': []}
+
+    def check_duplicate(self, url: str, title: str = None, cache: dict = None) -> bool:
+        """
+        Verificar si noticia ya fue procesada (por URL o titulo normalizado)
 
         Args:
             url: URL de la noticia
+            title: Titulo de la noticia
+            cache: Dict con 'urls' y 'titles' pre-cargados (opcional, mas rapido)
 
         Returns:
             True si ya existe
         """
-        try:
-            query = self.db.collection(self.collection).where(
-                "url_source", "==", url
-            ).limit(1)
+        # Si hay cache en memoria, usarlo (mucho mas rapido)
+        if cache is not None:
+            norm_url = self._normalize_url(url) if url else ''
+            norm_title = self._normalize_title(title) if title else ''
 
-            docs = query.stream()
-            return len(list(docs)) > 0
+            if norm_url and norm_url in cache.get('urls', set()):
+                return True
+            if norm_title and norm_title in cache.get('titles', set()):
+                return True
+            return False
+
+        # Fallback: query directa a Firestore
+        try:
+            if url:
+                query = self.db.collection(self.collection).where(
+                    "url_source", "==", url
+                ).limit(1)
+                docs = list(query.stream())
+                if docs:
+                    return True
+
+            if title:
+                query = self.db.collection(self.collection).where(
+                    "title", "==", title
+                ).limit(1)
+                docs = list(query.stream())
+                if docs:
+                    return True
+
+            return False
 
         except Exception as e:
             logger.warning(f"Error verificando duplicado: {e}")
@@ -270,3 +392,33 @@ class NewsDatabase:
         except Exception as e:
             logger.warning(f"Error obteniendo estadísticas: {e}")
             return {}
+
+    def delete_all_articles(self) -> int:
+        """
+        Borrar TODAS las noticias de la colección (limpieza diaria)
+
+        Returns:
+            Cantidad de artículos eliminados
+        """
+        try:
+            all_docs = self.db.collection(self.collection).stream()
+            batch = self.db.batch()
+            count = 0
+
+            for doc in all_docs:
+                batch.delete(doc.reference)
+                count += 1
+
+                # Firestore tiene límite de 500 operaciones por batch
+                if count % 500 == 0:
+                    batch.commit()
+                    batch = self.db.batch()
+
+            # Borrar lo que quede
+            batch.commit()
+            logger.info(f"Se borraron {count} artículos de Firestore")
+            return count
+
+        except Exception as e:
+            logger.error(f"Error borrando artículos: {e}")
+            return 0
