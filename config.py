@@ -484,9 +484,13 @@ IMAGE_BUCKET_FOLDER = "article_images"
 # DALL_E_SIZE = "1024x1024"
 # DALL_E_QUALITY = "standard"
 
-# ============ Claude Configuration ============
-CLAUDE_MODEL = "claude-haiku-4-5-20251001"  # Haiku 4.5: 10x más barato que Sonnet
+# ============ OpenAI Configuration (ChatGPT) ============
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")  # barato y rapido
 CLAUDE_MAX_TOKENS = 900  # Caption Facebook en ingles (hook + body + CTA + hashtags)
+
+# ============ Claude Configuration (legacy, ya no se usa) ============
+CLAUDE_MODEL = "claude-haiku-4-5-20251001"
 
 # ============ Base de Datos ============
 DB_BATCH_SIZE = 50  # Guardar en lotes
@@ -505,7 +509,7 @@ ENV = os.getenv("ENV", "development")  # development, production
 DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 
 # ============ Validations ============
-if not all([CLAUDE_API_KEY, GOOGLE_CLOUD_PROJECT, GOOGLE_APPLICATION_CREDENTIALS]):
+if not all([OPENAI_API_KEY, GOOGLE_CLOUD_PROJECT, GOOGLE_APPLICATION_CREDENTIALS]):
     raise ValueError(
-        "Missing configuration: ANTHROPIC_API_KEY, GOOGLE_CLOUD_PROJECT, GOOGLE_APPLICATION_CREDENTIALS in .env"
+        "Missing configuration: OPENAI_API_KEY, GOOGLE_CLOUD_PROJECT, GOOGLE_APPLICATION_CREDENTIALS in .env"
     )

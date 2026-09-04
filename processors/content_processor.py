@@ -4,7 +4,7 @@ Content Processor - Summarize and paraphrase news articles with Claude (ALL OUTP
 import logging
 from typing import Optional, Dict, List
 import re
-from anthropic import Anthropic
+from openai import OpenAI
 import config
 
 logger = logging.getLogger(__name__)
@@ -91,13 +91,9 @@ class ContentProcessor:
     """Process news content with Claude API - ALL OUTPUT IN ENGLISH"""
 
     def __init__(self):
-        # Limpiar AUTH_TOKEN vacio que rompe el SDK ("Bearer " sin valor)
-        import os
-        for var in ("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BEARER_TOKEN"):
-            if var in os.environ and not os.environ[var].strip():
-                del os.environ[var]
-        self.client = Anthropic(api_key=config.CLAUDE_API_KEY)
-        self.model = config.CLAUDE_MODEL
+        # OpenAI client (ChatGPT)
+        self.client = OpenAI(api_key=config.OPENAI_API_KEY)
+        self.model = config.OPENAI_MODEL
         self.max_tokens = config.CLAUDE_MAX_TOKENS
         # Contador de ahorro por cache
         self._cache_hits = 0
@@ -122,31 +118,16 @@ class ContentProcessor:
             truncated_text = original_text[: config.MAX_ARTICLE_LENGTH]
             user_message = f"Article title: {title}\n\nORIGINAL TEXT:\n{truncated_text}"
 
-            message = self.client.messages.create(
+            message = self.client.chat.completions.create(
                 model=self.model,
                 max_tokens=self.max_tokens,
-                # System prompt cacheado: 90% descuento en tokens cacheados
-                system=[
-                    {
-                        "type": "text",
-                        "text": SYSTEM_PROMPT,
-                        "cache_control": {"type": "ephemeral"},
-                    }
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_message},
                 ],
-                messages=[{"role": "user", "content": user_message}],
             )
 
-            # Registrar estadísticas de cache
-            usage = getattr(message, "usage", None)
-            if usage:
-                cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
-                cache_created = getattr(usage, "cache_creation_input_tokens", 0) or 0
-                if cache_read > 0:
-                    self._cache_hits += 1
-                elif cache_created > 0:
-                    self._cache_misses += 1
-
-            response_text = message.content[0].text
+            response_text = message.choices[0].message.content
             result = self._parse_response(response_text, original_text)
 
             logger.info(f"News summarized: {title[:50]}")
@@ -233,12 +214,12 @@ class ContentProcessor:
             "Respond with ONLY the overlay caption — nothing else."
         )
         try:
-            message = self.client.messages.create(
+            message = self.client.chat.completions.create(
                 model=self.model,
                 max_tokens=120,
                 messages=[{"role": "user", "content": prompt}],
             )
-            caption = message.content[0].text.strip()
+            caption = message.choices[0].message.content.strip()
             # Limpiar comillas accidentales
             caption = caption.strip('"\'`')
             # Tomar solo la primera linea no vacia
@@ -308,12 +289,12 @@ class ContentProcessor:
         )
 
         try:
-            message = self.client.messages.create(
+            message = self.client.chat.completions.create(
                 model=self.model,
                 max_tokens=600,
                 messages=[{"role": "user", "content": prompt}],
             )
-            response = message.content[0].text.strip()
+            response = message.choices[0].message.content.strip()
 
             # Parse virality:lean:importance
             scores = {}

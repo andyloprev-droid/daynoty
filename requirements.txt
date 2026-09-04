@@ -6,6 +6,7 @@ lxml
 
 # APIs
 anthropic>=0.28.0
+openai>=1.40.0
 
 # Google Cloud
 google-cloud-storage==2.10.0
