@@ -3,6 +3,7 @@ Image Processor - Procesar y subir imágenes a Google Cloud
 """
 import logging
 import io
+import os
 import hashlib
 import textwrap
 from typing import Optional, Tuple
@@ -299,6 +300,16 @@ class ImageProcessor:
             │                                │
             └────────────────────────────────┘
         """
+        # Si existe el marco MAGA, usar esa plantilla
+        frame_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "assets", "frame.png",
+        )
+        if os.path.exists(frame_path):
+            result = self._apply_frame_template(image_bytes, title, frame_path)
+            if result:
+                return result
+
         try:
             # ===== Dimensiones canónicas =====
             CANVAS_W = 1080
@@ -415,6 +426,93 @@ class ImageProcessor:
         except Exception as e:
             logger.error(f"Error aplicando plantilla: {e}", exc_info=True)
             return image_bytes
+
+    def _apply_frame_template(
+        self, image_bytes: bytes, title: str, frame_path: str
+    ) -> Optional[bytes]:
+        """
+        Plantilla con marco MAGA (1254x1254):
+            ┌──────── MAKE AMERICA GREAT AGAIN ────────┐
+            │   ┌──────────────────────────────┐       │
+            │   │            FOTO              │       │  (completa, sin recorte)
+            │   └──────────────────────────────┘       │
+            │   TEXTO PREGUNTA (azul marino)           │
+            └──────────────────────────────────────────┘
+        """
+        try:
+            canvas = Image.open(frame_path).convert("RGB")
+            W, H = canvas.size
+
+            # Area util dentro del marco (debajo del logo, dentro de las lineas rojas)
+            LEFT, RIGHT = 90, W - 90
+            TOP, BOTTOM = 165, H - 125
+            BOX_W = RIGHT - LEFT
+            PHOTO_MAX_H = 640
+            BORDER = 6
+            NAVY = (27, 45, 92)
+
+            # ===== 1) Foto completa (contain) =====
+            photo = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+            ow, oh = photo.size
+            crop_bottom = int(oh * 0.04)
+            if crop_bottom > 0:
+                photo = photo.crop((0, 0, ow, oh - crop_bottom))
+                ow, oh = photo.size
+
+            max_w = BOX_W - 2 * BORDER
+            max_h = PHOTO_MAX_H - 2 * BORDER
+            scale = min(max_w / ow, max_h / oh)
+            pw, ph = int(ow * scale), int(oh * scale)
+            photo = photo.resize((pw, ph), Image.Resampling.LANCZOS)
+
+            px = LEFT + (BOX_W - pw) // 2
+            py = TOP
+            draw = ImageDraw.Draw(canvas)
+            draw.rectangle(
+                [px - BORDER, py - BORDER, px + pw + BORDER - 1, py + ph + BORDER - 1],
+                fill=NAVY,
+            )
+            canvas.paste(photo, (px, py))
+
+            # ===== 2) Texto debajo de la foto (auto-fit) =====
+            text_top = py + ph + BORDER + 30
+            text_area_h = BOTTOM - text_top
+            font_path = self._find_font(bold=True)
+
+            font, lines, font_size = None, [], 32
+            for candidate in range(68, 26, -2):
+                try:
+                    f = (ImageFont.truetype(font_path, candidate)
+                         if font_path else ImageFont.load_default())
+                except (OSError, IOError):
+                    f = ImageFont.load_default()
+                cand = self._wrap_text_by_pixels(title, f, BOX_W, draw)
+                if int(candidate * 1.18) * len(cand) <= text_area_h and len(cand) <= 6:
+                    font, lines, font_size = f, cand, candidate
+                    break
+            if font is None:
+                try:
+                    font = (ImageFont.truetype(font_path, 28)
+                            if font_path else ImageFont.load_default())
+                except (OSError, IOError):
+                    font = ImageFont.load_default()
+                font_size = 28
+                lines = self._wrap_text_by_pixels(title, font, BOX_W, draw)[:6]
+
+            line_h = int(font_size * 1.18)
+            y = text_top + max(0, (text_area_h - line_h * len(lines)) // 2)
+            for line in lines:
+                draw.text((LEFT, y), line, font=font, fill=NAVY)
+                y += line_h
+
+            output = io.BytesIO()
+            canvas.save(output, format="JPEG", quality=92, optimize=True)
+            logger.info(f"Plantilla marco aplicada: {title[:50]}")
+            return output.getvalue()
+
+        except Exception as e:
+            logger.error(f"Error aplicando marco: {e}", exc_info=True)
+            return None
 
     def upload_to_cloud(
         self, image_bytes: bytes, filename: str, folder: str = "original_images"
