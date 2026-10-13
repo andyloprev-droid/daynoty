@@ -444,10 +444,10 @@ class ImageProcessor:
             W, H = canvas.size
 
             # Area util dentro del marco (debajo del logo, dentro de las lineas rojas)
-            LEFT, RIGHT = 90, W - 90
-            TOP, BOTTOM = 165, H - 125
+            LEFT, RIGHT = 70, W - 70
+            TOP, BOTTOM = 160, H - 120
             BOX_W = RIGHT - LEFT
-            PHOTO_MAX_H = 640
+            PHOTO_MAX_H = 750
             BORDER = 6
             NAVY = (27, 45, 92)
 
@@ -475,7 +475,7 @@ class ImageProcessor:
             canvas.paste(photo, (px, py))
 
             # ===== 2) Texto debajo de la foto (auto-fit) =====
-            text_top = py + ph + BORDER + 30
+            text_top = py + ph + BORDER + 22
             text_area_h = BOTTOM - text_top
             font_path = self._find_font(bold=True)
 
