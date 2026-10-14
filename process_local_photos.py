@@ -20,18 +20,28 @@ def main():
     parser.add_argument("--folder", default=DEFAULT_FOLDER)
     parser.add_argument("--watch", type=float, default=0,
                         help="minutos entre revisiones (0 = una sola pasada)")
+    parser.add_argument("--log", default=None,
+                        help="archivo de registro (para correr sin ventana)")
     args = parser.parse_args()
 
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        filename=args.log,
+        encoding="utf-8",
     )
     log = logging.getLogger("local_photos")
     source = LocalPhotoSource(args.folder)
 
     while True:
-        stats = source.process_new()
-        log.info(f"Pasada completa: {stats}")
+        try:
+            stats = source.process_new()
+            log.info(f"Pasada completa: {stats}")
+        except Exception:
+            # No dejar que un error (red, API) mate el vigilante
+            log.exception("Error en la pasada; se reintenta en la proxima")
+            if not args.watch:
+                raise
         if not args.watch:
             break
         time.sleep(args.watch * 60)
