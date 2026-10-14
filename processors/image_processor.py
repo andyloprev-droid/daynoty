@@ -427,6 +427,18 @@ class ImageProcessor:
             logger.error(f"Error aplicando plantilla: {e}", exc_info=True)
             return image_bytes
 
+    @staticmethod
+    def _strip_emoji(text: str) -> str:
+        """Quitar emojis/simbolos que la fuente del marco no puede dibujar (salen como □)."""
+        out = []
+        for ch in text or "":
+            cp = ord(ch)
+            if (cp > 0xFFFF or 0x2600 <= cp <= 0x27BF or 0x2B00 <= cp <= 0x2BFF
+                    or cp in (0xFE0F, 0x200D, 0x20E3)):
+                continue
+            out.append(ch)
+        return " ".join("".join(out).split())
+
     def _apply_frame_template(
         self, image_bytes: bytes, title: str, frame_path: str
     ) -> Optional[bytes]:
@@ -440,6 +452,7 @@ class ImageProcessor:
             └──────────────────────────────────────────┘
         """
         try:
+            title = self._strip_emoji(title)
             canvas = Image.open(frame_path).convert("RGB")
             W, H = canvas.size
 

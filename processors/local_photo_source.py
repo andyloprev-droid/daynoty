@@ -179,18 +179,31 @@ class LocalPhotoSource:
         except (TypeError, ValueError):
             hint_top, hint_bottom = 0, h
 
-        if loc in ("top", "bottom"):
-            uni = self._row_uniformity(img)
-            limit = int(0.7 * h)
-            margin = int(0.01 * h)  # pasar el borde/linea del recuadro de texto
-            if loc == "top":
-                edge = self._find_edge(uni, limit)
-                top = edge + margin if edge is not None else hint_top
-            else:
-                edge = self._find_edge(uni[::-1], limit)
-                bottom = h - edge - margin if edge is not None else hint_bottom
+        # El detector manda: la IA a veces se equivoca de lado (arriba/abajo)
+        uni = self._row_uniformity(img)
+        limit = int(0.7 * h)
+        margin = int(0.01 * h)  # pasar el borde/linea del recuadro de texto
+        edge_top = self._find_edge(uni, limit)
+        edge_bot = self._find_edge(uni[::-1], limit)
 
-        if bottom - top < 0.4 * h:
+        side = None
+        if loc == "top" and edge_top is not None:
+            side = "top"
+        elif loc == "bottom" and edge_bot is not None:
+            side = "bottom"
+        elif (edge_top is None) != (edge_bot is None):
+            side = "top" if edge_top is not None else "bottom"
+
+        if side == "top":
+            top = edge_top + margin
+        elif side == "bottom":
+            bottom = h - edge_bot - margin
+        elif loc == "top" and hint_top:
+            top = hint_top
+        elif loc == "bottom" and hint_bottom < h:
+            bottom = hint_bottom
+
+        if bottom - top < 0.25 * h:
             logger.warning("Recorte sospechoso, uso la imagen completa")
             top, bottom = 0, h
 
@@ -227,9 +240,16 @@ class LocalPhotoSource:
                 stats["skipped"] += 1
                 continue
 
-            text = (info.get("rewritten_text") or info.get("original_text") or "").strip()
-            if not text:
-                stats["failed"] += 1
+            original = (info.get("original_text") or "").strip()
+            text = (info.get("rewritten_text") or original).strip()
+            if not original or not text:
+                # Foto sin texto: no hay mensaje que reescribir. Se anota para no
+                # reintentarla cada pasada (borrar la entrada para reprocesarla).
+                logger.info(f"{name}: sin texto, se omite")
+                state["items"][sha] = {"file": name, "status": "skipped_no_text",
+                                       "at": datetime.now().isoformat()}
+                self._save_processed(state)
+                stats["skipped"] += 1
                 continue
 
             cropped = self._crop_photo(data, info)
