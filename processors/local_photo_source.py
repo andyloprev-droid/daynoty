@@ -37,8 +37,10 @@ Return ONLY a JSON object with these keys:
 - "text_location": one of "top", "bottom", "none" (where the caption banner/box is)
 - "photo_top_pct": number 0-100, approximate % from the top where the photo/illustration (without the caption) starts
 - "photo_bottom_pct": number 0-100, approximate % from the top where the photo/illustration ends
-- "attacks_protected_group": true if the caption demeans, blames, or calls for excluding people because of their religion, race, ethnicity, national origin, sexual orientation, gender, or disability (e.g. saying a religious group should not be allowed to worship or live here). Otherwise false.
-- "rewritten_text": the caption rewritten with slightly different wording but the SAME message and tone, in English, max 160 characters, plain text, keep selective CAPS for 1-3 emphasis words if the original uses caps. Empty string if attacks_protected_group is true.
+- "targeted_group": who the caption criticizes or attacks, in a few words (e.g. "Democrats", "Muslims", "a suspect", "none").
+- "targeted_group_type": exactly one of: "religion", "race", "ethnicity", "national_origin", "sexual_orientation", "gender", "disability", "political_party", "politician", "ideology", "government", "individual", "none". Judge the caption text only, not the appearance of people in the photo. Use "individual" for a specific person accused of something.
+- "hate_reason": one short sentence explaining the criticism, or empty string.
+- "rewritten_text": the caption rewritten with slightly different wording but the SAME message and tone, in English, max 160 characters, plain text, keep selective CAPS for 1-3 emphasis words if the original uses caps.
 - "topic": one short sentence describing what the post is about."""
 
 DESCRIPTION_INSTRUCTIONS = """This post comes from an image (an opinion meme), NOT a news article.
@@ -126,6 +128,16 @@ class LocalPhotoSource:
             logger.error(f"Error escribiendo descripcion: {e}")
             return None
 
+    PROTECTED_TYPES = {
+        "religion", "race", "ethnicity", "national_origin",
+        "sexual_orientation", "gender", "disability",
+    }
+
+    @classmethod
+    def _attacks_protected_group(cls, info: Dict) -> bool:
+        group_type = (info.get("targeted_group_type") or "none").strip().lower()
+        return group_type in cls.PROTECTED_TYPES
+
     # ---------- recorte ----------
     @staticmethod
     def _row_uniformity(img: Image.Image) -> np.ndarray:
@@ -205,9 +217,11 @@ class LocalPhotoSource:
                 stats["failed"] += 1
                 continue
 
-            if info.get("attacks_protected_group"):
-                logger.info(f"{name}: descartada (ataca a un grupo protegido)")
+            if self._attacks_protected_group(info):
+                reason = f"{info.get('targeted_group', '')}: {info.get('hate_reason', '')}"
+                logger.info(f"{name}: descartada (ataca a un grupo protegido) - {reason}")
                 state["items"][sha] = {"file": name, "status": "skipped_hate",
+                                       "reason": reason,
                                        "at": datetime.now().isoformat()}
                 self._save_processed(state)
                 stats["skipped"] += 1
