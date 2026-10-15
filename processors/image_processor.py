@@ -457,10 +457,10 @@ class ImageProcessor:
             W, H = canvas.size
 
             # Area util dentro del marco (debajo del logo, dentro de las lineas rojas)
-            LEFT, RIGHT = 70, W - 70
+            LEFT, RIGHT = 75, W - 75
             TOP, BOTTOM = 160, H - 120
             BOX_W = RIGHT - LEFT
-            PHOTO_MAX_H = 750
+            PHOTO_MAX_H = int(H * 0.57)  # foto grande: ~57% del alto, como la referencia 1612x2016
             BORDER = 6
             NAVY = (27, 45, 92)
 
@@ -493,7 +493,8 @@ class ImageProcessor:
             font_path = self._find_font(bold=True)
 
             font, lines, font_size = None, [], 32
-            for candidate in range(68, 26, -2):
+            max_font = max(68, int(W * 0.058))  # letra proporcional al ancho del marco
+            for candidate in range(max_font, 26, -2):
                 try:
                     f = (ImageFont.truetype(font_path, candidate)
                          if font_path else ImageFont.load_default())
