@@ -166,24 +166,38 @@ class LocalPhotoSource:
         Si se pasa `mode`, solo cuentan las filas del mismo color de fondo que
         el banner (asi una zona lisa de la foto no se confunde con el banner)."""
         n = len(uni)
-        max_start = int(0.15 * n)  # el encabezado de la pagina puede ocupar el inicio
+        max_start = int(0.20 * n)  # encabezados/logos de la pagina pueden ocupar el inicio
         max_gap = int(0.10 * n)    # distancia maxima entre renglones del banner
         # Entre renglones el banner es un color practicamente puro (>= 0.9);
         # zonas lisas/oscuras de la foto quedan por debajo.
         gaps = [y for y in range(min(limit, n)) if uni[y] >= 0.9]
-        if not gaps or gaps[0] > max_start:
+        if not gaps:
             return None
         if mode is not None:
-            bg = np.bincount(mode[gaps[:20]]).argmax()  # color de fondo del banner
+            # Fondo del banner = color que mas se repite entre los renglones
+            bg = np.bincount(mode[gaps]).argmax()
             gaps = [y for y in gaps if mode[y] == bg]
-            if not gaps or gaps[0] > max_start:
+            if not gaps:
                 return None
-        last = gaps[0]
-        for y in gaps[1:]:
-            if y - last > max_gap:
+
+        def chain_from(i):
+            last = gaps[i]
+            for y in gaps[i + 1:]:
+                if y - last > max_gap:
+                    break
+                last = y
+            return last
+
+        # Probar cada inicio posible (filas sueltas en el borde no deben cortar
+        # la cadena) y quedarse con la cadena que llega mas lejos.
+        best = None
+        for i, y in enumerate(gaps):
+            if y > max_start:
                 break
-            last = y
-        return last + 1
+            end = chain_from(i)
+            if best is None or end > best:
+                best = end
+        return None if best is None else best + 1
 
     def _crop_photo(self, image_bytes: bytes, info: Dict) -> bytes:
         img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
@@ -199,7 +213,7 @@ class LocalPhotoSource:
 
         # El detector manda: la IA a veces se equivoca de lado (arriba/abajo)
         uni, mode = self._row_profile(img)
-        limit = int(0.7 * h)
+        limit = int(0.85 * h)  # hay posts que son casi todo texto con una foto chica
         margin = int(0.01 * h)  # pasar el borde/linea del recuadro de texto
         edge_top = self._find_edge(uni, limit, mode)
         edge_bot = self._find_edge(uni[::-1], limit, mode[::-1])
@@ -221,7 +235,7 @@ class LocalPhotoSource:
         elif loc == "bottom" and hint_bottom < h:
             bottom = hint_bottom
 
-        if bottom - top < 0.25 * h:
+        if bottom - top < 0.15 * h:
             logger.warning("Recorte sospechoso, uso la imagen completa")
             top, bottom = 0, h
 
