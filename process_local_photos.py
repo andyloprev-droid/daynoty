@@ -22,6 +22,9 @@ def main():
                         help="minutos entre revisiones (0 = una sola pasada)")
     parser.add_argument("--log", default=None,
                         help="archivo de registro (para correr sin ventana)")
+    parser.add_argument("--force", nargs="*", default=[],
+                        help="fotos aprobadas a mano (ej. 32.jpg): se procesan "
+                             "aunque el filtro las haya descartado")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -35,7 +38,7 @@ def main():
 
     while True:
         try:
-            stats = source.process_new()
+            stats = source.process_new(force_files=args.force)
             log.info(f"Pasada completa: {stats}")
         except Exception:
             # No dejar que un error (red, API) mate el vigilante

@@ -212,7 +212,10 @@ class LocalPhotoSource:
         return out.getvalue()
 
     # ---------- flujo ----------
-    def process_new(self) -> Dict[str, int]:
+    def process_new(self, force_files: Optional[set] = None) -> Dict[str, int]:
+        """force_files: nombres de archivo que el usuario aprobo a mano; se
+        reprocesan aunque esten en la lista y sin aplicar el filtro de grupos."""
+        force_files = set(force_files or ())
         state = self._load_processed()
         stats = {"processed": 0, "skipped": 0, "failed": 0}
 
@@ -220,17 +223,20 @@ class LocalPhotoSource:
             with open(path, "rb") as f:
                 data = f.read()
             sha = hashlib.sha256(data).hexdigest()
-            if sha in state["items"]:
+            name = os.path.basename(path)
+            forced = name in force_files
+            if sha in state["items"] and not (
+                forced and state["items"][sha].get("status") != "uploaded"
+            ):
                 continue
 
-            name = os.path.basename(path)
             logger.info(f"Foto local nueva: {name}")
             info = self._analyze(data)
             if not info:
                 stats["failed"] += 1
                 continue
 
-            if self._attacks_protected_group(info):
+            if not forced and self._attacks_protected_group(info):
                 reason = f"{info.get('targeted_group', '')}: {info.get('hate_reason', '')}"
                 logger.info(f"{name}: descartada (ataca a un grupo protegido) - {reason}")
                 state["items"][sha] = {"file": name, "status": "skipped_hate",
