@@ -43,6 +43,30 @@ Return ONLY a JSON object with these keys:
 - "rewritten_text": the caption rewritten with slightly different wording but the SAME message and tone, in English, max 160 characters, plain text, keep selective CAPS for 1-3 emphasis words if the original uses caps.
 - "topic": one short sentence describing what the post is about."""
 
+SECOND_REVIEW_PROMPT = """A first filter flagged this social media caption as possibly attacking a protected group. Review it again carefully.
+
+Caption: {text}
+
+Decide ONE verdict:
+- "allowed": the caption criticizes a POLICY or political issue (immigration enforcement, deportations, border security, election law, Sharia law as a legal system, trans athletes in women's sports), a POLITICIAN or PARTY, a GOVERNMENT, or a SPECIFIC INDIVIDUAL for a specific alleged act or crime. Strong partisan language is fine.
+- "blocked": the caption portrays a whole religion, race, ethnicity, nationality or group of people as invaders, a takeover, inherently dangerous, or as people who should not live, worship or hold office here — or uses ordinary members of the group as the target.
+- "unsure": genuinely borderline.
+
+Important rules:
+- "Illegal alien", "illegal migrant", "noncitizen" describe IMMIGRATION STATUS, not a race or nationality. Captions about border enforcement, deportation, walls or illegal crossings are "allowed".
+- A caption about ONE NAMED person and what they did (e.g. "Illegal alien Maria X was caught doing Y") is "allowed".
+- Quoting a politician who opposes Sharia law as a legal system is "allowed".
+- Saying a religion or ethnic group is "taking over", "flooding" the country, or shouldn't hold office or worship is "blocked".
+
+Examples:
+- "Byron Donalds: We cannot have Sharia law take a foothold in our state." -> allowed
+- "Illegal alien Alba Chavez was caught burying cats alive. Now awaiting deportation." -> allowed
+- "Illegal migrants are being blocked from crossing into Poland. It's called a wall!" -> allowed
+- "The Islamic takeover has arrived! Radical Islamists are flooding into our country." -> blocked
+- "Letting Muslims build mosques was America's worst mistake." -> blocked
+
+Return ONLY JSON: {{"verdict": "allowed"|"blocked"|"unsure", "reason": "one short sentence"}}"""
+
 DESCRIPTION_INSTRUCTIONS = """This post comes from an image (an opinion meme), NOT a news article.
 Write the caption about the topic below following your structure.
 IMPORTANT: do not invent specific facts, statistics, names, dates, quotes or events that are not given here.
@@ -108,6 +132,31 @@ class LocalPhotoSource:
         except Exception as e:
             logger.error(f"Error analizando imagen: {e}")
             return None
+
+    def _second_review(self, text: str) -> Dict:
+        """Segunda opinion cuando el primer filtro marca un grupo protegido."""
+        try:
+            resp = self.content.client.chat.completions.create(
+                model="gpt-4o",  # mas fino que el mini; solo se usa en las fotos marcadas
+                max_tokens=150,
+                response_format={"type": "json_object"},
+                messages=[{"role": "user",
+                           "content": SECOND_REVIEW_PROMPT.format(text=text)}],
+            )
+            out = json.loads(resp.choices[0].message.content)
+            if out.get("verdict") not in ("allowed", "blocked", "unsure"):
+                out["verdict"] = "unsure"
+            return out
+        except Exception as e:
+            logger.error(f"Error en segunda revision: {e}")
+            return {"verdict": "unsure", "reason": "error en la revision"}
+
+    def _log_pending(self, name: str, verdict: str, reason: str, text: str) -> None:
+        """Lista legible de fotos que no se subieron, para que el usuario decida."""
+        path = os.path.join(self.work_dir, "descartadas.txt")
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(f"{datetime.now():%Y-%m-%d %H:%M}  {name}  [{verdict}]  {reason}\n"
+                    f"    texto: {text[:200]}\n")
 
     def _describe(self, text: str, topic: str) -> Optional[str]:
         user_message = (
@@ -269,14 +318,22 @@ class LocalPhotoSource:
                 continue
 
             if not forced and self._attacks_protected_group(info):
-                reason = f"{info.get('targeted_group', '')}: {info.get('hate_reason', '')}"
-                logger.info(f"{name}: descartada (ataca a un grupo protegido) - {reason}")
-                state["items"][sha] = {"file": name, "status": "skipped_hate",
-                                       "reason": reason,
-                                       "at": datetime.now().isoformat()}
-                self._save_processed(state)
-                stats["skipped"] += 1
-                continue
+                caption = info.get("original_text") or info.get("rewritten_text") or ""
+                review = self._second_review(caption)
+                if review["verdict"] == "allowed":
+                    logger.info(f"{name}: primer filtro la marco, la segunda revision "
+                                f"la aprueba - {review.get('reason', '')}")
+                else:
+                    reason = review.get("reason", "")
+                    logger.info(f"{name}: descartada ({review['verdict']}) - {reason}")
+                    state["items"][sha] = {"file": name,
+                                           "status": f"skipped_{review['verdict']}",
+                                           "reason": reason,
+                                           "at": datetime.now().isoformat()}
+                    self._save_processed(state)
+                    self._log_pending(name, review["verdict"], reason, caption)
+                    stats["skipped"] += 1
+                    continue
 
             original = (info.get("original_text") or "").strip()
             text = (info.get("rewritten_text") or original).strip()
