@@ -460,7 +460,8 @@ class ImageProcessor:
             LEFT, RIGHT = 75, W - 75
             TOP, BOTTOM = 160, H - 120
             BOX_W = RIGHT - LEFT
-            PHOTO_MAX_H = int(H * 0.57)  # foto grande: ~57% del alto, como la referencia 1612x2016
+            PHOTO_MAX_H = int(H * 0.60)  # foto grande: ~60% del alto
+            MAX_ZOOM = 1.35  # cuanto se puede ampliar sobre "cabe entera" para llenar el recuadro
             BORDER = 6
             NAVY = (27, 45, 92)
 
@@ -474,9 +475,17 @@ class ImageProcessor:
 
             max_w = BOX_W - 2 * BORDER
             max_h = PHOTO_MAX_H - 2 * BORDER
-            scale = min(max_w / ow, max_h / oh)
-            pw, ph = int(ow * scale), int(oh * scale)
-            photo = photo.resize((pw, ph), Image.Resampling.LANCZOS)
+            # Ampliar para llenar el recuadro (sin deformar). Lo que sobre se
+            # recorta: centrado a los lados y poco de arriba (para no cortar caras).
+            contain = min(max_w / ow, max_h / oh)
+            cover = max(max_w / ow, max_h / oh)
+            scale = min(cover, contain * MAX_ZOOM)
+            sw, sh = int(ow * scale), int(oh * scale)
+            photo = photo.resize((sw, sh), Image.Resampling.LANCZOS)
+            pw, ph = min(sw, max_w), min(sh, max_h)
+            cx = (sw - pw) // 2
+            cy = int((sh - ph) * 0.25)
+            photo = photo.crop((cx, cy, cx + pw, cy + ph))
 
             px = LEFT + (BOX_W - pw) // 2
             py = TOP

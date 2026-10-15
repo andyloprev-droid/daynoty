@@ -140,26 +140,44 @@ class LocalPhotoSource:
 
     # ---------- recorte ----------
     @staticmethod
-    def _row_uniformity(img: Image.Image) -> np.ndarray:
-        """Fraccion de pixeles de cada fila que comparten el color dominante."""
+    def _row_profile(img: Image.Image):
+        """Por cada fila: fraccion de pixeles con el color dominante y ese color."""
         small = img.convert("RGB").resize((256, img.height))
         q = (np.asarray(small) // 32).astype(np.int32)
         codes = q[:, :, 0] * 64 + q[:, :, 1] * 8 + q[:, :, 2]
-        out = np.empty(codes.shape[0])
+        uni = np.empty(codes.shape[0])
+        mode = np.empty(codes.shape[0], dtype=np.int32)
         for y, row in enumerate(codes):
-            out[y] = np.bincount(row, minlength=512).max() / row.size
-        return out
+            counts = np.bincount(row, minlength=512)
+            mode[y] = counts.argmax()
+            uni[y] = counts[mode[y]] / row.size
+        return uni, mode
 
     @staticmethod
-    def _find_edge(uni: np.ndarray, limit: int) -> Optional[int]:
+    def _row_uniformity(img: Image.Image) -> np.ndarray:
+        return LocalPhotoSource._row_profile(img)[0]
+
+    @staticmethod
+    def _find_edge(uni: np.ndarray, limit: int,
+                   mode: Optional[np.ndarray] = None) -> Optional[int]:
         """Desde el inicio de uni (lado del texto): los espacios entre renglones
         son filas casi de un solo color. Sigue esa cadena de espacios mientras
-        aparezcan cerca unos de otros; donde se corta, empieza la foto."""
+        aparezcan cerca unos de otros; donde se corta, empieza la foto.
+        Si se pasa `mode`, solo cuentan las filas del mismo color de fondo que
+        el banner (asi una zona lisa de la foto no se confunde con el banner)."""
         n = len(uni)
-        max_gap = int(0.15 * n)
-        gaps = [y for y in range(min(limit, n)) if uni[y] >= 0.75]
-        if not gaps or gaps[0] > max_gap:
+        max_start = int(0.15 * n)  # el encabezado de la pagina puede ocupar el inicio
+        max_gap = int(0.10 * n)    # distancia maxima entre renglones del banner
+        # Entre renglones el banner es un color practicamente puro (>= 0.9);
+        # zonas lisas/oscuras de la foto quedan por debajo.
+        gaps = [y for y in range(min(limit, n)) if uni[y] >= 0.9]
+        if not gaps or gaps[0] > max_start:
             return None
+        if mode is not None:
+            bg = np.bincount(mode[gaps[:20]]).argmax()  # color de fondo del banner
+            gaps = [y for y in gaps if mode[y] == bg]
+            if not gaps or gaps[0] > max_start:
+                return None
         last = gaps[0]
         for y in gaps[1:]:
             if y - last > max_gap:
@@ -180,11 +198,11 @@ class LocalPhotoSource:
             hint_top, hint_bottom = 0, h
 
         # El detector manda: la IA a veces se equivoca de lado (arriba/abajo)
-        uni = self._row_uniformity(img)
+        uni, mode = self._row_profile(img)
         limit = int(0.7 * h)
         margin = int(0.01 * h)  # pasar el borde/linea del recuadro de texto
-        edge_top = self._find_edge(uni, limit)
-        edge_bot = self._find_edge(uni[::-1], limit)
+        edge_top = self._find_edge(uni, limit, mode)
+        edge_bot = self._find_edge(uni[::-1], limit, mode[::-1])
 
         side = None
         if loc == "top" and edge_top is not None:
