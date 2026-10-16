@@ -158,6 +158,43 @@ class LocalPhotoSource:
             f.write(f"{datetime.now():%Y-%m-%d %H:%M}  {name}  [{verdict}]  {reason}\n"
                     f"    texto: {text[:200]}\n")
 
+    # Frases cortas elegidas por el usuario para la descripcion (2026-10-16)
+    SHORT_PHRASES = [
+        "Yes!", "Do you support?", "Do you agree?", "Do you support this?",
+        "How do you feel about this?", "Thoughts?", "Who's with me?",
+        "What would you say?", "How would you feel?",
+    ]
+    ALWAYS_ADAPT = {"Do you support?"}
+    NEVER_ADAPT = {"Yes!"}
+
+    def _short_description(self, text: str, topic: str) -> str:
+        """Una frase corta de la lista; mitad sencilla, mitad adaptada al tema."""
+        import random
+        phrase = random.choice(self.SHORT_PHRASES)
+        if phrase in self.NEVER_ADAPT:
+            return phrase
+        adapt = phrase in self.ALWAYS_ADAPT or random.random() < 0.5
+        if not adapt:
+            return phrase
+        base = phrase.rstrip("?").rstrip()
+        prompt = (
+            f'Adapt this short Facebook question to the subject of the post.\n'
+            f'Start with exactly: "{base}" and add the subject (who or what the post is about).\n'
+            f"Max 12 words, end with a question mark, plain text, no hashtags, no emojis, no quotes.\n\n"
+            f"Post: {text}\nTopic: {topic}\n\nRespond with ONLY the question."
+        )
+        try:
+            resp = self.content.client.chat.completions.create(
+                model=self.content.model, max_tokens=40,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            out = resp.choices[0].message.content.strip().strip('"').splitlines()[0].strip()
+            if out.lower().startswith(base.lower()) and len(out.split()) <= 16:
+                return out if out.endswith("?") else out + "?"
+        except Exception as e:
+            logger.warning(f"Error adaptando frase: {e}")
+        return phrase if phrase not in self.ALWAYS_ADAPT else "Do you support this?"
+
     def _describe(self, text: str, topic: str) -> Optional[str]:
         user_message = (
             f"{DESCRIPTION_INSTRUCTIONS}\n\n"
@@ -352,7 +389,7 @@ class LocalPhotoSource:
             image_url = self.images.upload_to_cloud(
                 framed, f"{os.path.splitext(name)[0]}.jpg", folder="local_photos"
             )
-            description = self._describe(text, info.get("topic", ""))
+            description = self._short_description(text, info.get("topic", ""))
             if not image_url or not description:
                 stats["failed"] += 1
                 continue
