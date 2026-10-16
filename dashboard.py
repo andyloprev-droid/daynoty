@@ -439,7 +439,7 @@ HTML_TEMPLATE = """
 
             if (!article) return;
 
-            const text = article.title + '\\n\\n' + article.summary;
+            const text = article.summary;
             copyToClipboard(text, btn);
         }
 
